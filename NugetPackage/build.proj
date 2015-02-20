@@ -6,7 +6,7 @@
 	</PropertyGroup>
 
 	<Target Name="Restore">
-	  <Exec Command="nuget.exe restore $(SolutionFile)" />
+	  <Exec Command="nuget.exe restore &quot;$(SolutionFile)&quot;" />
 	</Target>
 	
 	<Target Name="Compile" DependsOnTargets="Restore">
@@ -14,6 +14,6 @@
 	</Target>
 
 	<Target Name="Package" DependsOnTargets="Compile">
-	  <Exec Command="nuget.exe pack $(NuspecFile)" />
+	  <Exec Command="nuget.exe pack &quot;$(NuspecFile)&quot;" />
 	</Target>
 </Project>
