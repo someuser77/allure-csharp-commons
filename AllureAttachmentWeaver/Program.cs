@@ -13,6 +13,7 @@ using System.Linq;
 using log4net.Core;
 using log4net.Appender;
 using log4net.Layout;
+using Mono.Cecil.Pdb;
 
 namespace AllureAttachmentWeaver
 {
@@ -46,8 +47,20 @@ namespace AllureAttachmentWeaver
             SetupLogging(loggingLevel);
             
             string fileName = args[0];
-
-            AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(fileName);
+            
+            ReaderParameters readerParameters = GetReaderParameters(fileName);            
+            
+            WriterParameters writerParameters = new WriterParameters();
+            
+            if (PdbFileExists(fileName))
+            {
+                PdbReaderProvider pdbReaderProvider = new PdbReaderProvider();
+                readerParameters.SymbolReaderProvider = pdbReaderProvider;
+                readerParameters.ReadSymbols = true;
+                writerParameters.WriteSymbols = true;
+            }
+            
+            AssemblyDefinition assembly = AssemblyDefinition.ReadAssembly(fileName, readerParameters);
 
             IMethodWeaver weaver = new AttachmentWeaver();
 
@@ -55,7 +68,7 @@ namespace AllureAttachmentWeaver
             {
                 Weave(assembly, weaver);
 
-                Save(assembly, true);
+                Save(assembly, writerParameters, new OverwriteTarget(fileName));
             }
             catch(Exception e)
             {
@@ -75,7 +88,6 @@ namespace AllureAttachmentWeaver
 
                     logger.Debug("Found type: " + type.FullName);
 
-                            
                     foreach (MethodDefinition method in type.Methods.ToList())
                     {
                         weaver.Weave(method);
@@ -84,67 +96,119 @@ namespace AllureAttachmentWeaver
             }
         }
 
-        private static void Save(AssemblyDefinition assembly, bool overWrite)
+        private static void Save(AssemblyDefinition assembly, WriterParameters writerParameters, OutputStrategy outputStrategy)
         {
-            string[] args = Environment.GetCommandLineArgs();
+            string target = outputStrategy.PrepareTarget();
+                        
+            logger.Debug("Saving assembly to: " + target);
 
-            // already tested that atleast one argument is present.
-            // user arguments array is 1 based.
-            string fullFileName = args[1];
-
-            string target;
-            string pdb = GetMatchingPdb(fullFileName);
+            assembly.Write(target, writerParameters);
             
-            if (overWrite)
+            logger.Info("Assembly saved to: " + target);
+        }
+
+        private abstract class OutputStrategy
+        {
+            protected string mFile;
+            protected string mPdb;
+            protected bool mPdbExists;
+            
+            public OutputStrategy(string file)
             {
-                string backup = GetFileNameWithKeyword(fullFileName, "original");
-                
-                CleanMove(fullFileName, backup);
-                
-                if (pdb != null)
-                {
-                    CleanMove(pdb, Path.ChangeExtension(backup, "pdb"));
-                }
-                
-                target = fullFileName;
+                mFile = file;
+                mPdb = GetMatchingPdb(file);
+                mPdbExists = mPdb != null;
             }
-            else
+            
+            public abstract string PrepareTarget();
+        }
+        
+        private class OverwriteTarget : OutputStrategy
+        {
+            public OverwriteTarget(string file)
+                : base(file) { }
+               
+            public override string PrepareTarget()
             {
-                string generated = GetFileNameWithKeyword(fullFileName, "generated");
-                    
+                string backup = GetFileNameWithKeyword(mFile, "original");
+                string original = mFile;
+                
+                CleanMove(original, backup);
+
+                if (mPdbExists)
+                {
+                    string backupPdb = Path.ChangeExtension(backup, "pdb");
+                    string originalPdb = mPdb;
+                    CleanMove(originalPdb, backupPdb);
+                }
+
+                return mFile;
+            }
+        }
+        
+        private class DontOverwriteTarget : OutputStrategy
+        {
+            public DontOverwriteTarget(string file)
+                : base(file) { }
+            
+            public override string PrepareTarget()
+            {
+                string generated = GetFileNameWithKeyword(mFile, "generated");
+
                 if (File.Exists(generated))
                 {
                     File.Delete(generated);
                 }
-                    
-                if (pdb != null)
+
+                if (mPdbExists)
                 {
                     string generatedPdb = Path.ChangeExtension(generated, "pdb");
-                 
+
                     if (File.Exists(generatedPdb))
                     {
                         File.Delete(generatedPdb);
                     }
                 }
-                    
-                target = generated;
-            }            
-            
-            logger.Debug("Saving assembly to: " + target);
 
-            assembly.Write(target);
+                return generated;
+            }
+        }
+        
+        static ReaderParameters GetReaderParameters(string fileName)
+        {
+            DefaultAssemblyResolver assemblyResolver = new DefaultAssemblyResolver();
             
-            logger.Info("Assembly saved to: " + target);
+            string assemblyLocation = Path.GetDirectoryName(fileName);
+            if (assemblyLocation == String.Empty)
+                assemblyLocation = ".";
+            
+            assemblyResolver.AddSearchDirectory(assemblyLocation);
+            
+            ReaderParameters readerParameters = new ReaderParameters();
+            readerParameters.AssemblyResolver = assemblyResolver;
+            
+            return readerParameters;
         }
 
-        private static string GetMatchingPdb(string fullFileName)
+        private static bool PdbFileExists(string file)
         {
-            string fullPdbFileName = Path.ChangeExtension(fullFileName, "pdb");
+            return GetMatchingPdb(file) != null;
+        }
+        
+        private static string GetMatchingPdb(string file)
+        {
+            string pdb = Path.ChangeExtension(file, "pdb");
             
-            if (File.Exists(fullPdbFileName))
-                return fullPdbFileName;
+            if (File.Exists(pdb))
+                return pdb;
             
             return null;
+        }
+        
+        private static bool TryGetMatchingPdb(string file, out string pdb)
+        {
+            pdb = GetMatchingPdb(file);
+            return pdb == null;
         }
         
         private static void CleanMove(string source, string destination)
