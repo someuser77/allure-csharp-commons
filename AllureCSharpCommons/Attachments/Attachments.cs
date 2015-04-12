@@ -53,7 +53,12 @@ namespace AllureCSharpCommons
         {
             // generate a short hash for file names because too long hashs might
             // reach the limit of windows paths.
-            return Guid.NewGuid().ToString().Substring(0, 8);
+            
+            // we shouldn't have any colissions under the assumption the number of different
+            // attachments will be limited.
+            
+            // in case a true random hash will be needed the crypto API should be used.
+            return Guid.NewGuid().GetHashCode().ToString();
         }
     }
 }
